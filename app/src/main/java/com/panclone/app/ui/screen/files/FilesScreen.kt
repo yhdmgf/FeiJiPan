@@ -40,6 +40,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Sort
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -88,6 +89,8 @@ fun FilesScreen(
     onUpload: () -> Unit,
     onLogout: () -> Unit,
     onFabVisibility: (Boolean) -> Unit = {},
+    /** 跳转独立解析页（默认空实现，AppRoot 接导航前传 {} 也能编译） */
+    onOpenParse: () -> Unit = {},
     /** 预览叠加时禁用本页返回拦截，让系统返回键一次退出预览且保留搜索状态 */
     previewing: Boolean = false,
     vm: FilesViewModel = viewModel(),
@@ -312,6 +315,21 @@ fun FilesScreen(
                     Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    // 解析（跳转分享解析页）
+                    Box(
+                        Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .clickable { onOpenParse() },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Outlined.Link,
+                            contentDescription = "解析",
+                            tint = colors.textSecondary,
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
                     Spacer(Modifier.weight(1f))
                     // 排序
                     Box(

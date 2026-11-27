@@ -36,9 +36,9 @@ class SessionStore(context: Context) {
     private val _loggedIn = MutableStateFlow(false)
     val loggedIn: StateFlow<Boolean> = _loggedIn.asStateFlow()
 
-    /** 小飞机登录态：分享模式有 shareId，个人模式有 token，任一存在即视为已登录 */
+    /** 小飞机登录态：网页版登录后有 token，即视为已登录 */
     fun refreshLoggedIn() {
-        _loggedIn.value = feiShareId.isNotBlank() || feiToken.isNotBlank()
+        _loggedIn.value = feiToken.isNotBlank()
     }
 
     private val _avatarUrlFlow = MutableStateFlow("")
@@ -82,10 +82,24 @@ class SessionStore(context: Context) {
             refreshLoggedIn()
         }
 
+    /** 个人网盘设备标识 uuid（网页登录从 vuex 取，取链时与服务端保持一致） */
+    var feiUuid: String
+        get() = prefs.getString("fei_uuid", "").orEmpty()
+        set(v) = prefs.edit().putString("fei_uuid", v).apply()
+
     /** 个人网盘用户 id（取链拼 downloadId 用） */
     var feiUserId: String
         get() = secure.getString(KEY_FEI_USER_ID, "").orEmpty()
         set(v) = secure.edit().putString(KEY_FEI_USER_ID, v).apply()
+
+    /** 保存网页版 WebView 登录态：token 加密存，uuid/userId 存 prefs */
+    fun saveWebLogin(token: String, uuid: String, userId: String) {
+        feiMode = "PERSONAL"
+        feiUuid = uuid
+        feiUserId = userId
+        feiToken = token
+        refreshLoggedIn()
+    }
 
     /** 保存当前分享上下文并切换到分享模式 */
     fun saveShareContext(shareId: String, code: String, name: String) {
@@ -166,6 +180,7 @@ class SessionStore(context: Context) {
         feiCode = ""
         feiShareName = ""
         feiToken = ""
+        feiUuid = ""
         feiUserId = ""
         feiMode = "SHARE"
         refreshLoggedIn()

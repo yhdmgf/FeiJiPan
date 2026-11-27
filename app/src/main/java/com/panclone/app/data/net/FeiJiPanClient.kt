@@ -173,6 +173,19 @@ class FeiJiPanClient {
             resolveUrl(location)
         }
 
+    /** 查询当前登录账号的用户 id（登录后，/user/account/map，取 data.map.userId，纯数字字符串） */
+    suspend fun getUserId(token: String): String =
+        withContext(Dispatchers.IO) {
+            val uuid = getUuid()
+            val url = buildUrl("/user/account/map", uuid, token)
+            val data = checked(request("GET", url))
+            val userId = data.optJSONObject("map")?.optString("userId", "").orEmpty()
+            if (userId.isBlank() || !userId.toCharArray().all { it.isDigit() }) {
+                throw FeiJiPanException("小飞机未返回有效用户 id，请重新登录")
+            }
+            userId
+        }
+
     // ---------- 内部：请求 / 校验 ----------
 
     private fun request(method: String, url: String): Response {

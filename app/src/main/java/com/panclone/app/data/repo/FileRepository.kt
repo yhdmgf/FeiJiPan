@@ -5,163 +5,158 @@ import com.panclone.app.data.model.PanFile
 import com.panclone.app.data.model.RecycleItem
 import com.panclone.app.data.model.ShareRecord
 import com.panclone.app.data.model.ShareResponse
-import com.panclone.app.data.net.PanApi
+import com.panclone.app.data.net.FeiJiPanClient
+import com.panclone.app.data.net.FeiJiPanFile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * 文件仓库：封装接口调用，把 errno 翻成中文提示，并把"登录失效"单独标出来。
+ * 文件仓库：封装小飞机网盘调用，把结果映射成 UI 通用的 PanFile，
+ * 把业务异常翻成中文提示，并把"登录失效"单独标出来。
+ *
+ * 小飞机只支持「分享浏览/下载」与「个人网盘浏览/下载」，其余百度专属能力
+ * （建目录/重命名/移动/删除/建分享/回收站/搜索/分类/视频流）返回不支持。
  */
-class FileRepository(private val api: PanApi) {
+class FileRepository(private val feiji: FeiJiPanClient) {
 
     sealed interface Result<out T> {
         data class Ok<T>(val data: T) : Result<T>
         data class Err(val message: String, val authFailed: Boolean = false) : Result<Nothing>
     }
 
-    suspend fun list(
-        dir: String,
-        page: Int = 1,
-        num: Int = 200,
-        order: String = "name",
-        desc: Boolean = false,
-    ): Result<List<PanFile>> = withContext(Dispatchers.IO) {
-        val resp = api.list(dir, page, num, order, if (desc) 1 else 0)
-        when {
-            resp.errno == 0 -> Result.Ok(resp.list)
-            else -> Result.Err(
-                api.errnoMessage(resp.errno, resp.showMsg),
-                api.isAuthError(resp.errno),
-            )
+    /** 当前是否个人网盘模式 */
+    private val isPersonal: Boolean get() = App.instance.session.feiMode == "PERSONAL"
+
+    /**
+     * 列目录。folderId 为空串表示分享根目录（分享模式）或个人网盘根目录。
+     * 返回单页结果，由调用方按需翻页。
+     */
+    suspend fun list(folderId: String, page: Int = 1): Result<List<PanFile>> = withContext(Dispatchers.IO) {
+        try {
+            val session = App.instance.session
+            val data = if (isPersonal) {
+                feiji.listPersonal(folderId, page, session.feiToken)
+            } else if (folderId.isEmpty()) {
+                feiji.listShareRoot(session.feiShareId, session.feiCode, page)
+            } else {
+                feiji.listShareFolder(session.feiShareId, session.feiCode, folderId, page)
+            }
+            Result.Ok(data.files.map { it.toPanFile() })
+        } catch (e: Exception) {
+            Result.Err(e.message ?: "加载失败", isAuthError(e))
         }
     }
 
-    suspend fun search(key: String, dir: String): Result<List<PanFile>> = withContext(Dispatchers.IO) {
-        val resp = api.search(key, dir)
-        if (resp.errno == 0) Result.Ok(resp.list)
-        else Result.Err(api.errnoMessage(resp.errno, resp.showMsg), api.isAuthError(resp.errno))
+    /** 取文件直链（预览/播放用）。fileId 为小飞机文件 id。 */
+    suspend fun dlink(fileId: String): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            val session = App.instance.session
+            val url = if (isPersonal) {
+                feiji.resolvePersonalFileUrl(fileId, session.feiUserId, session.feiToken)
+            } else {
+                feiji.resolveShareFileUrl(
+                    session.feiShareId, session.feiCode, fileId,
+                    session.feiUserId, session.feiToken,
+                )
+            }
+            if (url.isNotBlank()) Result.Ok(url) else Result.Err("获取直链失败")
+        } catch (e: Exception) {
+            Result.Err(e.message ?: "获取直链失败", isAuthError(e))
+        }
     }
 
-    suspend fun createFolder(dir: String, name: String): Result<Unit> = withContext(Dispatchers.IO) {
-        val r = api.createFolder(dir, name)
-        if (r.errno == 0) Result.Ok(Unit)
-        else Result.Err(api.errnoMessage(r.errno, r.showMsg), api.isAuthError(r.errno))
-    }
+    // ==================== 小飞机不支持的能力：保留签名，统一返回不支持 ====================
 
-    suspend fun rename(path: String, newName: String, isDir: Boolean = false): Result<Unit> = withContext(Dispatchers.IO) {
-        val r = api.rename(path, newName, isDir)
-        if (r.errno == 0) Result.Ok(Unit)
-        else Result.Err(api.errnoMessage(r.errno, r.showMsg), api.isAuthError(r.errno))
-    }
+    suspend fun search(key: String, dir: String): Result<List<PanFile>> =
+        Result.Err("小飞机暂不支持搜索")
+
+    suspend fun createFolder(dir: String, name: String): Result<Unit> =
+        Result.Err("小飞机暂不支持新建文件夹")
+
+    suspend fun rename(path: String, newName: String, isDir: Boolean = false): Result<Unit> =
+        Result.Err("小飞机暂不支持重命名")
 
     suspend fun moveOrCopy(paths: List<String>, dest: String, copy: Boolean): Result<Unit> =
-        withContext(Dispatchers.IO) {
-            val r = api.moveOrCopy(paths, dest, copy)
-            if (r.errno == 0) Result.Ok(Unit)
-            else Result.Err(api.errnoMessage(r.errno, r.showMsg), api.isAuthError(r.errno))
-        }
+        Result.Err("小飞机暂不支持移动或复制")
 
-    suspend fun delete(paths: List<String>): Result<Unit> = withContext(Dispatchers.IO) {
-        val r = api.delete(paths)
-        if (r.errno == 0) Result.Ok(Unit)
-        else Result.Err(api.errnoMessage(r.errno, r.showMsg), api.isAuthError(r.errno))
-    }
+    suspend fun delete(paths: List<String>): Result<Unit> =
+        Result.Err("小飞机暂不支持删除")
 
     suspend fun share(fsIds: List<Long>, period: Int, pwd: String): Result<ShareResponse> =
-        withContext(Dispatchers.IO) {
-            val r = api.createShare(fsIds, period = period, pwd = pwd)
-            if (r.errno == 0) Result.Ok(r)
-            else Result.Err(api.errnoMessage(r.errno, r.showMsg), api.isAuthError(r.errno))
-        }
+        Result.Err("小飞机暂不支持创建分享")
 
     suspend fun modifyShare(shareId: Long, fsIds: List<Long>, period: Int, pwd: String): Result<ShareResponse> =
-        withContext(Dispatchers.IO) {
-            val r = api.modifyShare(shareId, fsIds, period, pwd)
-            if (r.errno == 0) Result.Ok(r)
-            else Result.Err(api.errnoMessage(r.errno, r.showMsg), api.isAuthError(r.errno))
-        }
+        Result.Err("小飞机暂不支持修改分享")
 
-    suspend fun dlink(path: String): Result<String> = withContext(Dispatchers.IO) {
-        val url = api.locatedownload(path)
-        if (url.isNotBlank()) Result.Ok(url) else Result.Err("获取直链失败")
-    }
+    /** 预览播放：小飞机无 m3u8，直接返回直链，ExoPlayer 流式播放。 */
+    suspend fun videoStream(fileId: String, quality: Int): Result<String> = dlink(fileId)
 
-    /** 网页版省流播放 URL（m3u8）。quality: 2160/720/480/360。 */
-    suspend fun videoStream(path: String, quality: Int): Result<String> = withContext(Dispatchers.IO) {
-        runCatching {
-            val m3u8 = api.videoM3u8(path, quality)
-            if (m3u8.isBlank()) throw IllegalStateException("获取视频流失败")
-            // 只保留一个 m3u8 小文件（几 KB），每次覆盖；ts 分片是带签名绝对 URL，
-            // ExoPlayer 直接流式读取、不落缓存，所以几乎不占空间。
-            val f = java.io.File(App.instance.cacheDir, "stream.m3u8")
-            f.writeText(m3u8)
-            "file://${f.absolutePath}"
-        }.fold(
-            onSuccess = { Result.Ok(it) },
-            onFailure = { Result.Err(it.message ?: "获取视频流失败") },
+    suspend fun audioList(maxPages: Int = 10): Result<List<PanFile>> =
+        Result.Err("小飞机暂不支持音频分类")
+
+    suspend fun recycleList(): Result<List<RecycleItem>> =
+        Result.Err("小飞机暂不支持回收站")
+
+    suspend fun recycleRestore(ids: List<Long>): Result<Unit> =
+        Result.Err("小飞机暂不支持回收站")
+
+    suspend fun recycleDelete(ids: List<Long>): Result<Unit> =
+        Result.Err("小飞机暂不支持回收站")
+
+    suspend fun recycleClear(): Result<Unit> =
+        Result.Err("小飞机暂不支持回收站")
+
+    suspend fun shareRecords(): Result<List<ShareRecord>> =
+        Result.Err("小飞机暂不支持分享记录")
+
+    suspend fun cancelShare(ids: List<Long>): Result<Unit> =
+        Result.Err("小飞机暂不支持分享记录")
+
+    // ==================== 内部：映射与辅助 ====================
+
+    /** 小飞机文件 → UI 通用 PanFile。category=0，类型靠扩展名判断。 */
+    private fun FeiJiPanFile.toPanFile(): PanFile {
+        val idLong = id.toLongOrNull() ?: 0L
+        return PanFile(
+            fsId = idLong,
+            path = id,          // 用小飞机原始 id 作寻址（面包屑/下载用）
+            name = name,
+            size = sizeBytes,
+            mtime = parseTime(modifiedAt),
+            ctime = 0L,
+            isDir = if (isDirectory) 1 else 0,
+            category = 0,
         )
     }
 
-    // ==================== 音频分类列表 ====================
-
-    /** category=2 音频；分页抓取直到不足 num 或超限。 */
-    suspend fun audioList(maxPages: Int = 10): Result<List<PanFile>> = withContext(Dispatchers.IO) {
-        val all = linkedMapOf<Long, PanFile>()
-        var lastError = ""
-        for (page in 1..maxPages) {
-            val resp = api.categoryList(category = 2, page = page, num = 100)
-            when {
-                resp.errno == 0 -> {
-                    resp.list.forEach { all[it.fsId] = it }
-                    if (resp.list.size < 100) break
-                }
-                else -> {
-                    lastError = api.errnoMessage(resp.errno, resp.showMsg)
-                    if (all.isEmpty()) return@withContext Result.Err(lastError, api.isAuthError(resp.errno))
-                    else break
-                }
+    /** 解析小飞机时间字符串（秒级时间戳优先，其次常见日期格式），失败返回 0。 */
+    private fun parseTime(raw: String): Long {
+        if (raw.isBlank()) return 0L
+        raw.toLongOrNull()?.let { return it }
+        for (fmt in TIME_FORMATS) {
+            runCatching {
+                val df = java.text.SimpleDateFormat(fmt, java.util.Locale.CHINA)
+                df.timeZone = java.util.TimeZone.getTimeZone("GMT+8")
+                df.setLenient(false)
+                return df.parse(raw)?.time?.div(1000) ?: 0L
             }
         }
-        Result.Ok(all.values.sortedBy { it.name.lowercase() })
+        return 0L
     }
 
-    // ==================== 回收站 ====================
-
-    suspend fun recycleList(): Result<List<RecycleItem>> = withContext(Dispatchers.IO) {
-        val resp = api.recycleList()
-        if (resp.errno == 0) Result.Ok(resp.list)
-        else Result.Err(api.errnoMessage(resp.errno, resp.showMsg), api.isAuthError(resp.errno))
-    }
-
-    suspend fun recycleRestore(ids: List<Long>): Result<Unit> = withContext(Dispatchers.IO) {
-        val r = api.recycleRestore(ids)
-        if (r.errno == 0) Result.Ok(Unit) else Result.Err(api.errnoMessage(r.errno, r.showMsg), r.errno == 132)
-    }
-
-    suspend fun recycleDelete(ids: List<Long>): Result<Unit> = withContext(Dispatchers.IO) {
-        val r = api.recycleDelete(ids)
-        if (r.errno == 0) Result.Ok(Unit) else Result.Err(api.errnoMessage(r.errno, r.showMsg), r.errno == 132)
-    }
-
-    suspend fun recycleClear(): Result<Unit> = withContext(Dispatchers.IO) {
-        val r = api.recycleClear()
-        if (r.errno == 0) Result.Ok(Unit) else Result.Err(api.errnoMessage(r.errno, r.showMsg), r.errno == 132)
-    }
-
-    // ==================== 分享记录 ====================
-
-    suspend fun shareRecords(): Result<List<ShareRecord>> = withContext(Dispatchers.IO) {
-        val resp = api.shareRecord()
-        if (resp.errno == 0) Result.Ok(resp.list)
-        else Result.Err(api.errnoMessage(resp.errno, resp.showMsg), api.isAuthError(resp.errno))
-    }
-
-    suspend fun cancelShare(ids: List<Long>): Result<Unit> = withContext(Dispatchers.IO) {
-        val r = api.cancelShare(ids)
-        if (r.errno == 0) Result.Ok(Unit) else Result.Err(api.errnoMessage(r.errno, r.showMsg), api.isAuthError(r.errno))
-    }
+    /** 登录过期判断：异常信息含「登录」关键字 */
+    private fun isAuthError(e: Exception): Boolean =
+        e.message?.contains("登录") == true
 
     companion object {
+        private val TIME_FORMATS = arrayOf(
+            "yyyy-MM-dd HH:mm:ss",
+            "yyyy-MM-dd HH:mm",
+            "yyyy/MM/dd HH:mm:ss",
+            "yyyy-MM-dd",
+            "yyyyMMddHHmmss",
+        )
+
         /** "NAME"/"TIME"/"SIZE"/"TYPE" -> SortField；非法值回退 NAME */
         fun parseSort(v: String): com.panclone.app.ui.screen.files.SortField =
             runCatching { com.panclone.app.ui.screen.files.SortField.valueOf(v) }

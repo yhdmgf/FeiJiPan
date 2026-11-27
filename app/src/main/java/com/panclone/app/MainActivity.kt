@@ -29,11 +29,6 @@ class MainActivity : ComponentActivity() {
         val session = app.session
         submitExternalLink(intent)
 
-        // 诊断：启动即把登录态与一次取链测试结果写进日志（供 adb 读取）
-        if (intent?.getBooleanExtra("diag", false) == true) {
-            com.panclone.app.data.net.Diag.run(this)
-        }
-
         setContent {
             var themeMode by remember { mutableStateOf(session.themeMode) }
             // 以实际生效主题为准；SYSTEM 模式不能一律当作浅色，否则深色桌面上图标会看不见。

@@ -4,7 +4,6 @@ import android.content.Context
 import com.panclone.app.data.model.TransferKind
 import com.panclone.app.data.model.TransferState
 import com.panclone.app.data.model.TransferTask
-import com.panclone.app.data.net.PanApi
 import com.panclone.app.data.store.SessionStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -34,9 +33,10 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class TransferManager(
     private val context: Context,
-    private val api: PanApi,
     private val session: SessionStore,
     private val threads: () -> Int,
+    private val downloadClient: OkHttpClient,
+    private val resolveUrl: suspend (TransferTask) -> String,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _tasks = MutableStateFlow<List<TransferTask>>(emptyList())
@@ -203,9 +203,9 @@ class TransferManager(
         RandomAccessFile(part, "rw").use { it.setLength(total) }
         update(taskId) { it.copy(done = startPos) }
 
-        // locatedownload 实测对任意大小文件均可用（3.4GB 验证通过，Range 任意位置 206），
-        // 官方「300MB 以内」只是网页 UI 提示，接口不受限；/api/download 的 dlink 有服务端缓存过期坑，弃用。
-        val url = task.directUrl.ifBlank { api.locatedownload(task.remotePath) }
+        // 小飞机直链：分享文件需解密（client 内处理），个人文件是明文；
+        // 每次取链可能过期，断点续传/重试时重新 resolve。
+        val url = task.directUrl.ifBlank { resolveUrl(task) }
         if (url.isBlank()) throw IllegalStateException("获取直链失败，可能登录已失效")
         downloadChunked(taskId, task, url, part, startPos, total)
 
@@ -239,11 +239,11 @@ class TransferManager(
             runCatching {
                 val req = Request.Builder()
                     .url(u)
-                    .header("User-Agent", PanApi.UA_PCS)
+                    .header("User-Agent", DESKTOP_UA)
                     .header("Accept-Encoding", "identity")
                     .header("Range", "bytes=$off-${off + span - 1}")
                     .build()
-                api.downloadClient.newCall(req).execute().use { resp ->
+                downloadClient.newCall(req).execute().use { resp ->
                     if (resp.code == 416) return@withContext ChunkRes(off, ByteArray(0), null)
                     if (!resp.isSuccessful) return@withContext ChunkRes(off, null, "HTTP ${resp.code}")
                     val buf = ByteArray(span.toInt())
@@ -289,7 +289,8 @@ class TransferManager(
                         delay(900)
                         res = fetch(res.off, span, urlRef.get())
                         if (res.data == null) {
-                            val fresh = if (task.directUrl.isBlank()) api.locatedownload(task.remotePath) else ""
+                            // 直链可能过期，重新取链后重试（保留断点）
+                            val fresh = if (task.directUrl.isBlank()) resolveUrl(task) else ""
                             if (fresh.isNotBlank()) urlRef.set(fresh)
                             res = fetch(res.off, span, urlRef.get())
                         }
@@ -313,24 +314,16 @@ class TransferManager(
 
     private class ChunkRes(val off: Long, val data: ByteArray?, val err: String?)
 
-    /** 上传：web 三步链 precreate → superfile2 → create（4MB/片，支持秒传） */
+    companion object {
+        /** 下载分块请求用桌面 UA（小飞机直链校验 UA） */
+        private const val DESKTOP_UA =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    }
+
+    /** 上传：小飞机网盘不开放上传接口，任务置为失败并提示。 */
     private suspend fun upload(taskId: String, task: TransferTask) {
-        if (task.sourceUri.isNotBlank()) {
-            // 第三方分享：原位读取 URI，不复制到缓存。
-            val uri = android.net.Uri.parse(task.sourceUri)
-            api.uploadStream(task.remotePath, task.size, {
-                context.contentResolver.openInputStream(uri)
-                    ?: throw IllegalStateException("无法读取所选文件")
-            }) { n -> update(taskId) { it.copy(done = n) } }
-            update(taskId) { it.copy(done = task.size) }
-            return
-        }
-        val local = File(task.localPath)
-        if (!local.exists()) throw IllegalStateException("本地文件不存在")
-        api.uploadFile(task.remotePath, local) { n ->
-            update(taskId) { it.copy(done = n) }
-        }
-        update(taskId) { it.copy(done = local.length()) }
+        throw IllegalStateException("小飞机网盘暂不支持上传")
     }
 
     private fun uniqueFile(dir: File, name: String): File {

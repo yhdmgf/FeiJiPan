@@ -19,7 +19,7 @@ data class PreviewUiState(
 
 /** 每张图片独立加载并缓存，翻页时不会用下一张状态覆盖当前页。 */
 class PreviewViewModel : ViewModel() {
-    private val repo = FileRepository(App.instance.api)
+    private val repo = FileRepository(App.instance.feiji)
     private val jobs = mutableMapOf<Long, Job>()
 
     private val _state = MutableStateFlow(PreviewUiState())

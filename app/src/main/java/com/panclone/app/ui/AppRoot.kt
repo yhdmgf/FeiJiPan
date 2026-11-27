@@ -38,17 +38,18 @@ import com.panclone.app.ui.components.NavItem
 import com.panclone.app.ui.screen.files.FilesScreen
 import com.panclone.app.ui.screen.files.FilesViewModel
 import com.panclone.app.ui.screen.files.thumbUrlOf
-import com.panclone.app.ui.screen.login.LoginScreen
+import com.panclone.app.ui.screen.login.FeiJiWebLoginScreen
 import com.panclone.app.ui.screen.login.LoginViewModel
 import com.panclone.app.ui.screen.player.AudioPlayerScreen
 import com.panclone.app.ui.screen.player.PlayerScreen
+import com.panclone.app.ui.screen.parse.ParseScreen
 import com.panclone.app.ui.screen.preview.PreviewScreen
 import com.panclone.app.ui.screen.settings.SettingsScreen
 import com.panclone.app.ui.screen.transfer.TransferScreen
 import com.panclone.app.ui.theme.LocalAppColors
 import com.panclone.app.ui.theme.LocalPageBackdrop
 
-private enum class Screen { LOGIN, MAIN, PLAYER, PREVIEW, AUDIO }
+private enum class Screen { LOGIN, MAIN, PLAYER, PREVIEW, AUDIO, PARSE }
 
 private val VIDEO_EXTS = setOf("mp4", "mkv", "avi", "mov", "flv", "ts", "webm", "m4v", "3gp", "rmvb", "wmv")
 private val IMAGE_EXTS = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif")
@@ -80,7 +81,11 @@ fun AppRoot(
     val session = App.instance.session
     val loginVm: LoginViewModel = viewModel()
     val loggedIn by session.loggedIn.collectAsState()
-    var screen by rememberSaveable { mutableStateOf(if (loggedIn) Screen.MAIN else Screen.LOGIN) }
+    // 未登录一律先走网页版 WebView 登录；登录成功（session.loggedIn 翻转）后自动进主框架。
+    // justLoggedIn 兜底：登录回调已触发但 StateFlow 尚未重组合时，避免闪回登录页。
+    var justLoggedIn by rememberSaveable { mutableStateOf(false) }
+    val showMain = loggedIn || justLoggedIn
+    var screen by rememberSaveable { mutableStateOf(if (showMain) Screen.MAIN else Screen.LOGIN) }
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var current by remember { mutableStateOf<PanFile?>(null) }
     var previewItems by remember { mutableStateOf<List<PanFile>>(emptyList()) }
@@ -89,13 +94,22 @@ fun AppRoot(
     val playback by AudioPlaybackManager.state.collectAsState()
     val playbackArtwork by AudioPlaybackManager.artwork.collectAsState()
 
-    BackHandler(enabled = screen == Screen.PREVIEW || screen == Screen.AUDIO) {
+    BackHandler(enabled = screen == Screen.PREVIEW || screen == Screen.AUDIO || screen == Screen.PARSE) {
         screen = Screen.MAIN
     }
 
+    if (!showMain) {
+        FeiJiWebLoginScreen(
+            onLoginSuccess = {
+                justLoggedIn = true
+                screen = Screen.MAIN
+            },
+        )
+        return
+    }
+
     when (screen) {
-        Screen.LOGIN -> LoginScreen(onLoggedIn = { screen = Screen.MAIN }, vm = loginVm)
-        Screen.MAIN, Screen.AUDIO, Screen.PREVIEW, Screen.PLAYER -> {
+        Screen.MAIN, Screen.AUDIO, Screen.PREVIEW, Screen.PLAYER, Screen.PARSE -> {
             val stateHolder = rememberSaveableStateHolder()
             val pageBackdrop = rememberLayerBackdrop()
             val filesVm: FilesViewModel = viewModel()
@@ -113,6 +127,7 @@ fun AppRoot(
                                 onFabVisibility = {},
                                 previewing = screen == Screen.PREVIEW || screen == Screen.PLAYER,
                                 onUpload = {},
+                                onOpenParse = { screen = Screen.PARSE },
                                 onOpenFile = { file, siblings ->
                                     val ext = file.name.substringAfterLast('.', "").lowercase()
                                     when {
@@ -153,6 +168,7 @@ fun AppRoot(
                                         AudioPlaybackManager.dismissAndStop()
                                         session.logout()
                                         loginVm.reset()
+                                        justLoggedIn = false
                                         tab = 0
                                         screen = Screen.LOGIN
                                     },
@@ -219,6 +235,10 @@ fun AppRoot(
                     // 视频播放也叠加在 MAIN 之上：MAIN 存活，文件列表不重建。
                     if (screen == Screen.PLAYER) {
                         PlayerScreen(file = current, onBack = { screen = Screen.MAIN })
+                    }
+                    // 解析页叠加在 MAIN 之上：从文件页顶部“解析”按钮进入，返回回文件页。
+                    if (screen == Screen.PARSE) {
+                        ParseScreen(onBack = { screen = Screen.MAIN })
                     }
                 }
             }

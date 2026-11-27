@@ -243,5 +243,6 @@ fun AppRoot(
                 }
             }
         }
+        else -> {}
     }
 }

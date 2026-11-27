@@ -50,7 +50,6 @@ import com.panclone.app.data.net.FeiJiPanFile
 import com.panclone.app.ui.theme.LocalAppColors
 import com.panclone.app.ui.theme.Radius
 import com.panclone.app.util.formatSize
-import com.panclone.app.util.formatTime
 
 /**
  * 解析页：输入小飞机分享链接 + 提取码 → 解析分享文件列表 → 点文件取签名直链 → 二次点「下载」。
@@ -312,7 +311,7 @@ private fun ParseFileRow(
             )
             if (!file.isDirectory) {
                 Text(
-                    if (file.modifiedAt > 0) "${formatSize(file.sizeBytes)} · ${formatTime(file.modifiedAt)}"
+                    if (file.modifiedAt.isNotEmpty()) "${formatSize(file.sizeBytes)} · ${file.modifiedAt}"
                     else formatSize(file.sizeBytes),
                     fontSize = 12.sp,
                     color = colors.textSecondary,

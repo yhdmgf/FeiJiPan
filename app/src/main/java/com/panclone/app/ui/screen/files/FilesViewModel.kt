@@ -19,14 +19,15 @@ enum class SortField(val label: String) {
 
 enum class ViewMode { LIST, GRID }
 
-/** 目录栈的一层 */
+/** 目录栈的一层：path 存小飞机 folderId（根为空串），name 为展示名 */
 data class Crumb(val path: String, val name: String)
 
 data class ScrollPosition(val index: Int, val offset: Int)
 
 data class FilesUiState(
-    val path: String = "/",
-    val crumbs: List<Crumb> = listOf(Crumb("/", "全部文件")),
+    /** 当前目录 folderId（根为空串） */
+    val path: String = "",
+    val crumbs: List<Crumb> = listOf(Crumb("", "全部文件")),
     val items: List<PanFile> = emptyList(),
     val loading: Boolean = false,
     val refreshing: Boolean = false,
@@ -53,7 +54,7 @@ data class FilesUiState(
     val allSelected: Boolean get() = items.isNotEmpty() && selected.size == items.size
 }
 
-/** 分享弹层状态：files 非空表示弹层打开；done=true 表示已创建/已更新 */
+/** 分享弹层状态：files 非空表示弹层打开 */
 data class ShareUiState(
     val files: List<PanFile> = emptyList(),
     val fsIds: List<Long> = emptyList(),
@@ -66,8 +67,14 @@ data class ShareUiState(
     val error: String = "",
 )
 
+/**
+ * 文件页 ViewModel（小飞机网盘版）。
+ *
+ * 导航基于小飞机 folderId 栈（小飞机没有路径概念）：
+ * 进目录 push、后退 pop，面包屑按栈渲染。排序纯客户端（小飞机列表无排序参数）。
+ */
 class FilesViewModel : ViewModel() {
-    private val repo = FileRepository(App.instance.api)
+    private val repo = FileRepository(App.instance.feiji)
     private val session = App.instance.session
 
     private val _state = MutableStateFlow(
@@ -81,10 +88,15 @@ class FilesViewModel : ViewModel() {
     private val scrollPositions = mutableMapOf<Pair<String, ViewMode>, ScrollPosition>()
     /** 目录快照：后退时若目录未被修改则直接复用，不再请求。 */
     private val snapshots = mutableMapOf<String, List<PanFile>>()
-    /** 本次会话中被修改过的路径（含其父目录），用于判定能否复用快照。 */
+    /** 本次会话中被修改过的目录，用于判定能否复用快照。 */
     private val dirtyPaths = mutableSetOf<String>()
 
-    init { load("/") }
+    /** 每页 60 条，最多拉 20 页（1200 项）避免极端大分享卡死 */
+    private companion object {
+        const val MAX_PAGES = 20
+    }
+
+    init { load("") }
 
     fun rememberScroll(key: String, mode: ViewMode, index: Int, offset: Int) {
         scrollPositions[key to mode] = ScrollPosition(index.coerceAtLeast(0), offset.coerceAtLeast(0))
@@ -95,11 +107,12 @@ class FilesViewModel : ViewModel() {
 
     // ---------------- 加载 ----------------
 
-    fun load(path: String, refresh: Boolean = false, highlightFsId: Long? = null) {
+    /** 加载目录（folderId，根用空串）：循环翻页拉全，再客户端排序。 */
+    fun load(folderId: String, refresh: Boolean = false, highlightFsId: Long? = null) {
         val s = _state.value
         _state.value = s.copy(
-            path = path,
-            crumbs = buildCrumbs(path),
+            path = folderId,
+            crumbs = rebuildCrumbs(folderId),
             loading = !refresh,
             refreshing = refresh,
             error = "",
@@ -112,27 +125,43 @@ class FilesViewModel : ViewModel() {
         )
         viewModelScope.launch {
             val cur = _state.value
-            val order = mapOrder(cur.sortBy)
-            val desc = !cur.sortAsc
-            val r = if (highlightFsId == null) {
-                repo.list(path, order = order, desc = desc)
-            } else {
-                listUntilTarget(path, highlightFsId, order, desc)
-            }
-            when (r) {
-                is FileRepository.Result.Ok -> {
-                    val sorted = sortItems(r.data, cur.sortBy, cur.sortAsc)
-                    snapshots[cur.path] = sorted
-                    dirtyPaths.remove(cur.path)
-                    _state.value = _state.value.copy(
-                        items = sorted, loading = false, refreshing = false,
-                        empty = sorted.isEmpty(),
-                    )
+            val all = mutableListOf<PanFile>()
+            var page = 1
+            while (page <= MAX_PAGES) {
+                when (val r = repo.list(folderId, page)) {
+                    is FileRepository.Result.Ok -> {
+                        all += r.data
+                        if (r.data.isEmpty()) break
+                        page++
+                    }
+                    is FileRepository.Result.Err -> {
+                        _state.value = _state.value.copy(
+                            loading = false, refreshing = false, error = r.message, authFailed = r.authFailed,
+                        )
+                        return@launch
+                    }
                 }
-                is FileRepository.Result.Err -> _state.value = _state.value.copy(
-                    loading = false, refreshing = false, error = r.message, authFailed = r.authFailed,
-                )
             }
+            if (highlightFsId != null && all.none { it.fsId == highlightFsId }) {
+                // 目标在更后面：继续翻页直到找到或拉尽（locate 用）
+                while (page <= MAX_PAGES) {
+                    when (val r = repo.list(folderId, page)) {
+                        is FileRepository.Result.Ok -> {
+                            all += r.data
+                            if (r.data.isEmpty() || r.data.any { it.fsId == highlightFsId }) break
+                            page++
+                        }
+                        else -> break
+                    }
+                }
+            }
+            val sorted = sortItems(all, cur.sortBy, cur.sortAsc)
+            snapshots[cur.path] = sorted
+            dirtyPaths.remove(cur.path)
+            _state.value = _state.value.copy(
+                items = sorted, loading = false, refreshing = false,
+                empty = sorted.isEmpty(),
+            )
         }
     }
 
@@ -150,19 +179,24 @@ class FilesViewModel : ViewModel() {
 
     fun enter(dir: PanFile) {
         if (!dir.isDirectory) return
+        // dir.path 存的是小飞机 folderId；先带上真实目录名入栈，再加载
+        val crumbs = _state.value.crumbs
+        val newCrumbs = if (crumbs.any { it.path == dir.path }) crumbs
+        else crumbs + Crumb(dir.path, dir.name)
+        _state.value = _state.value.copy(crumbs = newCrumbs)
         load(dir.path)
     }
 
     fun goUp() {
-        val current = _state.value.path
-        if (current == "/") return
-        val parent = current.substringBeforeLast('/').ifEmpty { "/" }
-        val cached = snapshots[parent]
+        val crumbs = _state.value.crumbs
+        if (crumbs.size <= 1) return
+        val parent = crumbs[crumbs.size - 2]
+        val cached = snapshots[parent.path]
         // 父目录没有改动过：直接用快照，避免每次后退都重新请求。
-        if (cached != null && parent !in dirtyPaths) {
+        if (cached != null && parent.path !in dirtyPaths) {
             _state.value = _state.value.copy(
-                path = parent,
-                crumbs = buildCrumbs(parent),
+                path = parent.path,
+                crumbs = crumbs.dropLast(1),
                 items = cached,
                 loading = false,
                 refreshing = false,
@@ -176,14 +210,14 @@ class FilesViewModel : ViewModel() {
             )
             return
         }
-        load(parent)
+        load(parent.path)
     }
 
-    fun jumpTo(path: String) = load(path)
+    fun jumpTo(folderId: String) = load(folderId)
 
     fun locate(file: PanFile) {
-        val parent = file.path.substringBeforeLast('/').ifEmpty { "/" }
-        load(parent, highlightFsId = file.fsId)
+        // 小飞机没有父目录信息，跳转回当前目录并高亮
+        load(_state.value.path, highlightFsId = file.fsId)
     }
 
     fun clearHighlight() {
@@ -282,7 +316,7 @@ class FilesViewModel : ViewModel() {
         _state.value = _state.value.copy(selectMode = false, selected = emptySet(), highlightedFsId = null)
     }
 
-    // ---------------- 操作 ----------------
+    // ---------------- 操作（小飞机不支持，统一 toast 提示） ----------------
 
     fun openCreate() { _state.value = _state.value.copy(showCreate = true) }
     fun closeCreate() { _state.value = _state.value.copy(showCreate = false) }
@@ -328,7 +362,7 @@ class FilesViewModel : ViewModel() {
         }
     }
 
-    // ---------------- 分享（有效期/提取码/二维码/编辑，网页版能力对齐） ----------------
+    // ---------------- 分享（小飞机不支持创建分享，保留状态供 UI 复用） ----------------
 
     private val _share = MutableStateFlow(ShareUiState())
     val share: StateFlow<ShareUiState> = _share.asStateFlow()
@@ -350,11 +384,7 @@ class FilesViewModel : ViewModel() {
                     _share.value = _share.value.copy(
                         creating = false, done = true,
                         shareId = d.shareId, link = d.link, pwd = d.pwd.ifBlank { pwd },
-                        qrcodeUrl = d.qrcodeUrl.ifBlank {
-                            if (d.shortUrl.isNotBlank())
-                                "https://pan.baidu.com/api/wechat/qrcode?shorturl=${d.shortUrl}&clienttype=0&channel=chunlei&pwd=$pwd"
-                            else ""
-                        },
+                        qrcodeUrl = d.qrcodeUrl,
                     )
                 }
                 is FileRepository.Result.Err -> _share.value = _share.value.copy(creating = false, error = r.message)
@@ -370,14 +400,10 @@ class FilesViewModel : ViewModel() {
             when (val r = repo.modifyShare(s.shareId, s.fsIds, period, pwd)) {
                 is FileRepository.Result.Ok -> {
                     val d = r.data
-                    val newLink = d.link.ifBlank { s.link }
-                    val surl = d.shortUrl.ifBlank { newLink.substringAfterLast('/').removePrefix("s/1") }
                     _share.value = _share.value.copy(
                         creating = false, done = true,
-                        link = newLink, pwd = d.pwd.ifBlank { pwd },
-                        qrcodeUrl = if (surl.isNotBlank())
-                            "https://pan.baidu.com/api/wechat/qrcode?shorturl=$surl&clienttype=0&channel=chunlei&pwd=$pwd"
-                        else s.qrcodeUrl,
+                        link = d.link.ifBlank { s.link }, pwd = d.pwd.ifBlank { pwd },
+                        qrcodeUrl = d.qrcodeUrl.ifBlank { s.qrcodeUrl },
                     )
                 }
                 is FileRepository.Result.Err -> _share.value = _share.value.copy(creating = false, error = r.message)
@@ -392,7 +418,7 @@ class FilesViewModel : ViewModel() {
     fun openDetail(f: PanFile) { _detail.value = f }
     fun closeDetail() { _detail.value = null }
 
-    // ---------------- 移动/复制目录选择 ----------------
+    // ---------------- 移动/复制目录选择（小飞机不支持，保留状态） ----------------
 
     data class DirPickUiState(
         val visible: Boolean = false,
@@ -432,46 +458,19 @@ class FilesViewModel : ViewModel() {
 
     // ---------------- 内部 ----------------
 
-    private fun buildCrumbs(path: String): List<Crumb> {
-        val out = mutableListOf(Crumb("/", "全部文件"))
-        if (path == "/") return out
-        var acc = ""
-        path.trim('/').split('/').forEach { seg ->
-            if (seg.isNotBlank()) {
-                acc += "/$seg"
-                out.add(Crumb(acc, seg))
-            }
-        }
-        return out
-    }
-
-    private suspend fun listUntilTarget(
-        path: String,
-        targetFsId: Long,
-        order: String,
-        desc: Boolean,
-    ): FileRepository.Result<List<PanFile>> {
-        val files = mutableListOf<PanFile>()
-        var page = 1
-        while (true) {
-            when (val result = repo.list(path, page = page, num = 200, order = order, desc = desc)) {
-                is FileRepository.Result.Err -> return result
-                is FileRepository.Result.Ok -> {
-                    files += result.data
-                    if (result.data.any { it.fsId == targetFsId } || result.data.size < 200) {
-                        return FileRepository.Result.Ok(files)
-                    }
-                    page++
-                }
-            }
-        }
-    }
-
-    private fun mapOrder(f: SortField): String = when (f) {
-        SortField.NAME -> "name"
-        SortField.TIME -> "time"
-        SortField.SIZE -> "size"
-        SortField.TYPE -> "type"
+    /**
+     * 重建面包屑。小飞机没有父目录信息，这里按当前 folderId 在目录栈中的位置回溯：
+     * 根固定为「全部文件」；进入子目录时由 enter() 先在 crumbs 末尾追加，这里只做一致性裁剪。
+     */
+    private fun rebuildCrumbs(folderId: String): List<Crumb> {
+        val root = Crumb("", "全部文件")
+        val existing = _state.value.crumbs
+        if (folderId.isEmpty()) return listOf(root)
+        // 已在栈里（后退/跳转）：截断到该层
+        val idx = existing.indexOfFirst { it.path == folderId }
+        if (idx >= 0) return existing.take(idx + 1)
+        // 新进入的子目录：追加（名称稍后由列表渲染，先占位）
+        return existing + Crumb(folderId, folderId)
     }
 
     /** 目录永远在前，其余按字段排序 */

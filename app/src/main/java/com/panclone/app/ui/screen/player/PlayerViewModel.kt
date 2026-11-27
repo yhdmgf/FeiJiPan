@@ -33,7 +33,7 @@ data class PlayerUiState(
  */
 class PlayerViewModel : ViewModel() {
     private val app = App.instance
-    private val repo = FileRepository(app.api)
+    private val repo = app.repo
 
     private var currentFile: PanFile? = null
 

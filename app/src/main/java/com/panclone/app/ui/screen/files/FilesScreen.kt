@@ -1,21 +1,8 @@
 package com.panclone.app.ui.screen.files
 
-import androidx.compose.ui.unit.Velocity
-import androidx.compose.ui.graphics.graphicsLayer
-
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,9 +16,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -40,7 +25,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -54,15 +38,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Sort
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -74,8 +54,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import coil3.compose.AsyncImage
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -90,9 +68,7 @@ import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.panclone.app.data.model.PanFile
-import com.panclone.app.ui.ios.Ios26AlertDialog
 import com.panclone.app.ui.theme.LocalAppColors
-import com.panclone.app.ui.theme.LocalPageBackdrop
 import com.panclone.app.ui.theme.Radius
 import com.panclone.app.util.formatSize
 import com.panclone.app.util.formatTime
@@ -100,8 +76,8 @@ import com.panclone.app.util.formatTime
 /**
  * 文件页（移植 PanNative 规格）
  *
- * 自上而下：搜索/排序行 → 路径(breadcrumb) → 列表或平铺网格 → 底部悬浮工具栏
- * 交互：点文件夹进入 / 点文件预览 / 更多或长按直接进入百度网盘同款多选
+ * 自上而下：排序/展示方式行 → 路径(breadcrumb) → 列表或平铺网格 → 底部悬浮工具栏
+ * 交互：点文件夹进入 / 点文件预览 / 更多或长按直接进入多选（小飞机网盘仅支持浏览/下载/预览）
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -118,12 +94,8 @@ fun FilesScreen(
     val state by vm.state.collectAsState()
     val colors = LocalAppColors.current
     val ctx = LocalContext.current
-    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
 
-    var renameTarget by remember { mutableStateOf<PanFile?>(null) }
-    var deleteTargets by remember { mutableStateOf<List<PanFile>>(emptyList()) }
     var showSort by remember { mutableStateOf(false) }
-    var keyword by remember { mutableStateOf("") }
 
     // 两种展示方式各自保存滚动位置，并共用同一 backdrop 捕获层。
     val listState = rememberLazyListState()
@@ -241,30 +213,16 @@ fun FilesScreen(
         }
     }
 
-    // 返回（PanNative 逻辑）：键盘开着→系统收起；多选→取消；搜索→退出；子目录→上级
-    BackHandler(enabled = !previewing && (renameTarget != null || showSort || state.selectMode || state.path != "/" || state.searching)) {
+    // 返回（PanNative 逻辑）：多选→取消；子目录→上级
+    BackHandler(enabled = !previewing && (showSort || state.selectMode || state.path != "/")) {
         when {
-            renameTarget != null -> renameTarget = null
             showSort -> showSort = false
             state.selectMode -> vm.cancelSelect()
-            state.searching -> { keyword = ""; focusManager.clearFocus(); vm.setSearching(false) }
             state.path != "/" -> { rememberScrollPosition(); vm.goUp() }
         }
     }
 
-    // 键盘收起后清除焦点，搜索框里不再留闪烁的光标
-    val imeBottom = WindowInsets.ime
-        .getBottom(androidx.compose.ui.platform.LocalDensity.current)
-    LaunchedEffect(imeBottom) {
-        if (imeBottom == 0 && state.searching) focusManager.clearFocus()
-    }
-
     // 下拉刷新：任意路径、任意滚动位置（只要已到顶部）都能触发，只刷新当前目录。
-    val currentAtTop = if (state.viewMode == ViewMode.LIST) {
-        !listState.canScrollBackward
-    } else {
-        !gridState.canScrollBackward
-    }
 
     Box(Modifier.fillMaxSize()) {
 
@@ -285,7 +243,6 @@ fun FilesScreen(
                     EmptyView(
                         searching = state.searching,
                         keyword = state.keyword,
-                        onUpload = onUpload,
                         onRefresh = { vm.refresh() },
                     )
                 }
@@ -349,71 +306,12 @@ fun FilesScreen(
                 )
             } else {
                 Column(Modifier.fillMaxWidth().statusBarsPadding()) {
-                // 搜索 + 视图 + 排序
+                // 排序 + 展示方式（小飞机网盘不支持搜索）
                 Row(
                     Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Row(
-                        Modifier
-                            .weight(1f)
-                            .height(40.dp)
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(colors.cardBackground)
-                            .border(0.7.dp, colors.separator, RoundedCornerShape(20.dp)),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            Icons.Outlined.Search, null, tint = colors.textSecondary,
-                            modifier = Modifier.padding(start = 12.dp).size(17.dp),
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        androidx.compose.foundation.text.BasicTextField(
-                            value = keyword,
-                            onValueChange = { keyword = it; vm.clearHighlight() },
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight()
-                                .wrapContentHeight(Alignment.CenterVertically),
-                            singleLine = true,
-                            textStyle = androidx.compose.ui.text.TextStyle(
-                                fontSize = 14.sp,
-                                lineHeight = 20.sp,
-                                color = colors.textPrimary,
-                            ),
-                            cursorBrush = androidx.compose.ui.graphics.SolidColor(colors.accent),
-                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                                imeAction = androidx.compose.ui.text.input.ImeAction.Search,
-                            ),
-                            keyboardActions = androidx.compose.foundation.text.KeyboardActions(
-                                onSearch = { vm.search(keyword); focusManager.clearFocus() },
-                            ),
-                            decorationBox = { inner ->
-                                Box(
-                                    Modifier.fillMaxSize(),
-                                    contentAlignment = Alignment.CenterStart,
-                                ) {
-                                    if (keyword.isEmpty()) {
-                                        Text(
-                                            "搜索",
-                                            fontSize = 14.sp,
-                                            lineHeight = 20.sp,
-                                            color = colors.textTertiary,
-                                        )
-                                    }
-                                    inner()
-                                }
-                            },
-                        )
-                        if (keyword.isNotEmpty()) {
-                            Icon(
-                                Icons.Default.Close, "清除", tint = colors.textTertiary,
-                                modifier = Modifier.padding(end = 12.dp).size(16.dp)
-                                    .clickable { keyword = ""; vm.setSearching(false) },
-                            )
-                        }
-                    }
-                    Spacer(Modifier.width(8.dp))
+                    Spacer(Modifier.weight(1f))
                     // 排序
                     Box(
                         Modifier
@@ -473,28 +371,7 @@ fun FilesScreen(
                         downloadAll(ctx, state.selectedFiles)
                         vm.cancelSelect()
                     },
-                    onDelete = { deleteTargets = state.selectedFiles },
-                    onShare = { vm.openShare(state.selectedFiles) },
-                    onRename = { state.selectedFiles.singleOrNull()?.let { renameTarget = it } },
-                    renameFile = renameTarget,
-                    onRenameCancel = { renameTarget = null },
-                    onRenameConfirm = { file, name ->
-                        if (name.isNotBlank()) {
-                            vm.rename(file, name.trim())
-                            renameTarget = null
-                        }
-                    },
-                    onCopy = { vm.openDirPicker(true, state.selectedFiles) },
-                    onMove = { vm.openDirPicker(false, state.selectedFiles) },
                     onDetail = { state.selectedFiles.singleOrNull()?.let { vm.openDetail(it) } },
-                    onLocate = if (state.searching && state.selectedFiles.size == 1) {
-                        {
-                            val file = state.selectedFiles.first()
-                            keyword = ""
-                            focusManager.clearFocus()
-                            vm.locate(file)
-                        }
-                    } else null,
                     backdrop = backdrop,
                 )
             }
@@ -517,43 +394,11 @@ fun FilesScreen(
         }
     } // 外层 Box 结束
 
-    // 新建文件夹弹窗已移到 AppRoot 内嵌真模糊玻璃浮层。
-
-    if (deleteTargets.isNotEmpty()) {
-        com.panclone.app.ui.components.GlassConfirmDialog(
-            backdrop = LocalPageBackdrop.current,
-            title = "删除 ${deleteTargets.size} 个项目？",
-            message = "此操作不可撤销。",
-            confirmText = "删除",
-            destructive = true,
-            onConfirm = { vm.delete(deleteTargets); deleteTargets = emptyList() },
-            onDismiss = { deleteTargets = emptyList() },
-        )
-    }
-
-    val shareState by vm.share.collectAsState()
-    if (shareState.files.isNotEmpty()) {
-        ShareDialog(
-            state = shareState,
-            onDismiss = { vm.closeShare() },
-            onCreate = { period, pwd -> vm.createShare(period, pwd) },
-            onModify = { period, pwd -> vm.modifyShare(period, pwd) },
-        )
-    }
+    // 小飞机网盘不支持删除/分享/重命名/移动/复制，对应弹层入口已全部移除。
 
     val detailFile by vm.detail.collectAsState()
     detailFile?.let { df ->
         FileDetailDialog(file = df, thumbUrl = thumbUrlOf(df), onDismiss = { vm.closeDetail() })
-    }
-
-    val dirPickState by vm.dirPick.collectAsState()
-    if (dirPickState.visible) {
-        DirPickerDialog(
-            title = if (dirPickState.copy) "复制到" else "移动到",
-            count = dirPickState.files.size,
-            onDismiss = { vm.closeDirPicker() },
-            onPick = { dest -> vm.confirmDirPicker(dest) },
-        )
     }
 }
 
@@ -904,41 +749,7 @@ private fun CheckCircle(selected: Boolean) {
     }
 }
 
-// ==================== 底部工具栏 ====================
-
-/** 文件页底部悬浮工具栏：上传 · 新建 */
-@Composable
-private fun FileToolbar(onUpload: () -> Unit, onCreate: () -> Unit) {
-    val colors = LocalAppColors.current
-    Row(
-        Modifier
-            .padding(bottom = 96.dp)
-            .clip(RoundedCornerShape(20.dp))
-            .background(colors.cardBackground)
-            .padding(horizontal = 6.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        ToolItem("上传", onUpload)
-        ToolItem("新建", onCreate)
-    }
-}
-
-@Composable
-private fun ToolItem(label: String, onClick: () -> Unit) {
-    val colors = LocalAppColors.current
-    Text(
-        label,
-        fontSize = 14.sp,
-        color = colors.accent,
-        fontWeight = FontWeight.Medium,
-        modifier = Modifier
-            .clip(RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 8.dp),
-    )
-}
-
-/** 百度网盘同款多选顶栏：取消 / 已选数量 / 全选。 */
+/** 多选顶栏：取消 / 已选数量 / 全选。 */
 @Composable
 private fun SelectionTopBar(
     allSelected: Boolean,
@@ -992,40 +803,18 @@ private data class SelectAction(
     val onClick: () -> Unit,
 )
 
-/** 百度网盘同款底部多选操作区：单选显示重命名/详情，多选自动收起。 */
+/** 小飞机网盘多选操作区：仅保留下载与文件详情（不支持分享/删除/重命名/移动/复制）。 */
 @Composable
 private fun SelectToolbar(
     count: Int,
     onDownload: () -> Unit,
-    onDelete: () -> Unit,
-    onShare: () -> Unit,
-    onRename: () -> Unit,
-    renameFile: PanFile?,
-    onRenameCancel: () -> Unit,
-    onRenameConfirm: (PanFile, String) -> Unit,
-    onCopy: () -> Unit,
-    onMove: () -> Unit,
     onDetail: () -> Unit,
-    onLocate: (() -> Unit)?,
     backdrop: Backdrop,
 ) {
     val colors = LocalAppColors.current
     val single = count == 1
-    var renameText by remember(renameFile?.fsId) { mutableStateOf(renameFile?.name.orEmpty()) }
-    val renameFocus = remember(renameFile?.fsId) { FocusRequester() }
-    LaunchedEffect(renameFile?.fsId) {
-        if (renameFile != null) runCatching { renameFocus.requestFocus() }
-    }
     val actions = buildList {
         add(SelectAction("下载", com.panclone.app.R.drawable.act_download, onClick = onDownload))
-        add(SelectAction("分享", com.panclone.app.R.drawable.act_share, onClick = onShare))
-        add(SelectAction("删除", com.panclone.app.R.drawable.act_delete, danger = true, onClick = onDelete))
-        if (single) add(SelectAction("重命名", com.panclone.app.R.drawable.act_rename, onClick = onRename))
-        add(SelectAction("移动", com.panclone.app.R.drawable.act_move, onClick = onMove))
-        add(SelectAction("复制", com.panclone.app.R.drawable.act_copy, onClick = onCopy))
-        if (onLocate != null) {
-            add(SelectAction("所在位置", com.panclone.app.R.drawable.act_open, onClick = onLocate))
-        }
         if (single) add(SelectAction("文件详情", com.panclone.app.R.drawable.act_detail, onClick = onDetail))
     }
 
@@ -1039,61 +828,13 @@ private fun SelectToolbar(
             Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
-                // 键盘弹出时把整个操作栏抬到输入法上方，重命名输入框才不会被遮挡。
                 .padding(bottom = imeBottom)
                 .padding(vertical = 8.dp),
         ) {
-            if (renameFile != null) {
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        painter = painterResource(iconResFor(renameFile)),
-                        contentDescription = null,
-                        tint = Color.Unspecified,
-                        modifier = Modifier.size(30.dp),
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    androidx.compose.foundation.text.BasicTextField(
-                        value = renameText,
-                        onValueChange = { renameText = it },
-                        singleLine = true,
-                        textStyle = androidx.compose.ui.text.TextStyle(
-                            color = colors.textPrimary,
-                            fontSize = 15.sp,
-                            lineHeight = 20.sp,
-                        ),
-                        cursorBrush = androidx.compose.ui.graphics.SolidColor(colors.accent),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(40.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(colors.cardBackground.copy(alpha = 0.72f))
-                            .focusRequester(renameFocus)
-                            .padding(horizontal = 12.dp)
-                            .wrapContentHeight(Alignment.CenterVertically),
-                    )
-                    Text(
-                        "取消",
-                        color = colors.textSecondary,
-                        modifier = Modifier.clickable(onClick = onRenameCancel).padding(10.dp),
-                    )
-                    Text(
-                        "确定",
-                        color = colors.accent,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier
-                            .clickable { onRenameConfirm(renameFile, renameText) }
-                            .padding(10.dp),
-                    )
-                }
-            } else {
-                actions.chunked(5).forEach { rowActions ->
-                    Row(Modifier.fillMaxWidth()) {
-                        rowActions.forEach { action -> BarAction(action) }
-                        repeat(5 - rowActions.size) { Spacer(Modifier.weight(1f)) }
-                    }
+            actions.chunked(5).forEach { rowActions ->
+                Row(Modifier.fillMaxWidth()) {
+                    rowActions.forEach { action -> BarAction(action) }
+                    repeat(5 - rowActions.size) { Spacer(Modifier.weight(1f)) }
                 }
             }
         }
@@ -1136,7 +877,6 @@ private fun androidx.compose.foundation.layout.RowScope.BarAction(action: Select
 private fun EmptyView(
     searching: Boolean,
     keyword: String,
-    onUpload: () -> Unit,
     onRefresh: () -> Unit,
 ) {
     val colors = LocalAppColors.current
@@ -1156,20 +896,8 @@ private fun EmptyView(
             modifier = Modifier.size(78.dp),
         )
         Spacer(Modifier.height(10.dp))
-        Text("暂无文件，快来上传吧~", fontSize = 13.sp, color = colors.textSecondary)
-        Spacer(Modifier.height(40.dp))
-        Box(
-            Modifier
-                .width(112.dp)
-                .height(44.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(colors.accent)
-                .clickable(onClick = onUpload),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text("上传文件", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-        }
-        Spacer(Modifier.height(20.dp))
+        Text("暂无文件", fontSize = 13.sp, color = colors.textSecondary)
+        Spacer(Modifier.height(24.dp))
         Text(
             "刷新",
             color = colors.accent,

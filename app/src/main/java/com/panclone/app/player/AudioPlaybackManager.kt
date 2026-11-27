@@ -15,7 +15,7 @@ import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.panclone.app.App
 import com.panclone.app.data.model.PanFile
-import com.panclone.app.data.net.PanApi
+import com.panclone.app.data.net.FeiJiPanClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -478,7 +478,8 @@ object AudioPlaybackManager {
         if (!cached.isNullOrBlank() && System.currentTimeMillis() - time <= URL_TTL_MS) {
             return cached
         }
-        val url = withContext(Dispatchers.IO) { App.instance.api.locatedownload(file.path) }
+        val result = withContext(Dispatchers.IO) { App.instance.repo.dlink(file.path) }
+        val url = (result as? com.panclone.app.data.repo.FileRepository.Result.Ok)?.data ?: ""
         if (url.isNotBlank()) {
             urls[file.fsId] = url
             urlTimes[file.fsId] = System.currentTimeMillis()
@@ -527,8 +528,7 @@ object AudioPlaybackManager {
             retriever.setDataSource(
                 url,
                 mapOf(
-                    "User-Agent" to PanApi.UA,
-                    "Cookie" to App.instance.session.cookie,
+                    "User-Agent" to com.panclone.app.data.net.FeiJiPanClient.DESKTOP_UA,
                 ),
             )
             retriever.embeddedPicture

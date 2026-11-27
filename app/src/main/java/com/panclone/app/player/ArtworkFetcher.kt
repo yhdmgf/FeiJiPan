@@ -1,7 +1,7 @@
 package com.panclone.app.player
 
 import com.panclone.app.App
-import com.panclone.app.data.net.PanApi
+import com.panclone.app.data.net.FeiJiPanClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -29,8 +29,7 @@ object ArtworkFetcher {
                 val req = Request.Builder()
                     .url(url)
                     .header("Range", "bytes=0-$rangeEnd")
-                    .header("User-Agent", PanApi.UA)
-                    .header("Cookie", App.instance.session.cookie)
+                    .header("User-Agent", FeiJiPanClient.DESKTOP_UA)
                     .build()
                 client.newCall(req).execute().use { resp ->
                     val input = resp.body?.byteStream() ?: return@use null to null

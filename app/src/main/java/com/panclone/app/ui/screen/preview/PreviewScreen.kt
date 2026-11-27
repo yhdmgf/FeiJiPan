@@ -11,17 +11,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -42,11 +38,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -64,14 +57,10 @@ import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.panclone.app.data.model.PanFile
 import com.panclone.app.ui.components.TopFadeBlur
-import com.panclone.app.ui.ios.Ios26AlertDialog
-import com.panclone.app.ui.screen.files.DirPickerDialog
 import com.panclone.app.ui.screen.files.FileDetailDialog
 import com.panclone.app.ui.screen.files.FilesViewModel
-import com.panclone.app.ui.screen.files.ShareDialog
 import com.panclone.app.ui.screen.files.downloadAll
 import com.panclone.app.ui.screen.files.thumbUrlOf
-import com.panclone.app.ui.theme.LocalAppColors
 
 @Composable
 fun PreviewScreen(
@@ -102,11 +91,7 @@ fun PreviewScreen(
     val currentIndex = pagerState.currentPage.coerceIn(files.indices)
     val currentFile = files[currentIndex]
     var controlsVisible by remember { mutableStateOf(recycleMode) }
-    var moreExpanded by remember { mutableStateOf(false) }
-    var renameFile by remember { mutableStateOf<PanFile?>(null) }
-    var deleteTarget by remember { mutableStateOf<PanFile?>(null) }
 
-    LaunchedEffect(currentIndex) { moreExpanded = false; renameFile = null }
     LaunchedEffect(filesState.message) {
         if (filesState.message.isNotBlank()) {
             Toast.makeText(context, filesState.message, Toast.LENGTH_SHORT).show()
@@ -173,23 +158,7 @@ fun PreviewScreen(
                 ImageBottomBar(
                     file = currentFile,
                     backdrop = previewBackdrop,
-                    moreExpanded = moreExpanded,
-                    renameFile = renameFile,
                     onDownload = { downloadAll(context, listOf(currentFile)) },
-                    onShare = { filesVm.openShare(listOf(currentFile)) },
-                    onDelete = { deleteTarget = currentFile },
-                    onMore = { moreExpanded = !moreExpanded },
-                    onCopy = { filesVm.openDirPicker(true, listOf(currentFile)) },
-                    onMove = { filesVm.openDirPicker(false, listOf(currentFile)) },
-                    onRename = { renameFile = currentFile },
-                    onRenameCancel = { renameFile = null },
-                    onRenameConfirm = { name ->
-                        if (name.isNotBlank()) {
-                            filesVm.rename(currentFile, name.trim())
-                            renameFile = null
-                            onBack()
-                        }
-                    },
                     onDetail = { filesVm.openDetail(currentFile) },
                     modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal = 14.dp, vertical = 12.dp),
                 )
@@ -198,36 +167,8 @@ fun PreviewScreen(
     }
 
     if (!recycleMode) {
-        deleteTarget?.let { file ->
-            Ios26AlertDialog(
-                title = "删除「${file.name}」？",
-                message = "此操作不可撤销。",
-                confirmText = "删除",
-                destructive = true,
-                onConfirm = { filesVm.delete(listOf(file)); deleteTarget = null; onBack() },
-                onDismiss = { deleteTarget = null },
-            )
-        }
-        val shareState by filesVm.share.collectAsState()
-        if (shareState.files.isNotEmpty()) {
-            ShareDialog(
-                state = shareState,
-                onDismiss = filesVm::closeShare,
-                onCreate = filesVm::createShare,
-                onModify = filesVm::modifyShare,
-            )
-        }
         val detailFile by filesVm.detail.collectAsState()
         detailFile?.let { FileDetailDialog(it, thumbUrlOf(it), filesVm::closeDetail) }
-        val dirPick by filesVm.dirPick.collectAsState()
-        if (dirPick.visible) {
-            DirPickerDialog(
-                title = if (dirPick.copy) "复制到" else "移动到",
-                count = dirPick.files.size,
-                onDismiss = filesVm::closeDirPicker,
-                onPick = filesVm::confirmDirPicker,
-            )
-        }
     }
 }
 
@@ -284,59 +225,16 @@ private fun ZoomableImage(
 private fun ImageBottomBar(
     file: PanFile,
     backdrop: Backdrop,
-    moreExpanded: Boolean,
-    renameFile: PanFile?,
     onDownload: () -> Unit,
-    onShare: () -> Unit,
-    onDelete: () -> Unit,
-    onMore: () -> Unit,
-    onCopy: () -> Unit,
-    onMove: () -> Unit,
-    onRename: () -> Unit,
-    onRenameCancel: () -> Unit,
-    onRenameConfirm: (String) -> Unit,
     onDetail: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val colors = LocalAppColors.current
     val shape = RoundedCornerShape(24.dp)
-    var renameText by remember(renameFile?.fsId) { mutableStateOf(renameFile?.name.orEmpty()) }
-    val focusRequester = remember(renameFile?.fsId) { FocusRequester() }
-    LaunchedEffect(renameFile?.fsId) { if (renameFile != null) runCatching { focusRequester.requestFocus() } }
-    val imeBottom = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
-    Box(modifier.clip(shape).padding(bottom = imeBottom)) {
+    Box(modifier.clip(shape)) {
         TopFadeBlur(backdrop = backdrop, modifier = Modifier.matchParentSize())
-        Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-            if (renameFile != null) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                    androidx.compose.foundation.text.BasicTextField(
-                        value = renameText,
-                        onValueChange = { renameText = it },
-                        singleLine = true,
-                        textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 15.sp, lineHeight = 20.sp),
-                        cursorBrush = SolidColor(colors.accent),
-                        modifier = Modifier.weight(1f).height(40.dp).clip(RoundedCornerShape(12.dp)).background(Color.White.copy(alpha = 0.12f)).focusRequester(focusRequester).padding(horizontal = 12.dp).wrapContentHeight(Alignment.CenterVertically),
-                    )
-                    Text("取消", color = Color.White.copy(alpha = 0.7f), modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClick = onRenameCancel).padding(10.dp))
-                    Text("确定", color = Color(0xFF70B7FF), fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable { onRenameConfirm(renameText) }.padding(10.dp))
-                }
-            } else {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    ImageBarAction("下载", com.panclone.app.R.drawable.act_download, onDownload)
-                    ImageBarAction("分享", com.panclone.app.R.drawable.act_share, onShare)
-                    ImageBarAction("删除", com.panclone.app.R.drawable.act_delete, onDelete)
-                    ImageBarAction("更多", com.panclone.app.R.drawable.act_more, onMore)
-                }
-                if (moreExpanded) {
-                    Spacer(Modifier.height(4.dp))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                        ImageBarAction("复制", com.panclone.app.R.drawable.act_copy, onCopy)
-                        ImageBarAction("移动", com.panclone.app.R.drawable.act_move, onMove)
-                        ImageBarAction("重命名", com.panclone.app.R.drawable.act_rename, onRename)
-                        ImageBarAction("文件详细", com.panclone.app.R.drawable.act_detail, onDetail)
-                    }
-                }
-            }
+        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+            ImageBarAction("下载", com.panclone.app.R.drawable.act_download, onDownload)
+            ImageBarAction("文件详细", com.panclone.app.R.drawable.act_detail, onDetail)
         }
     }
 }

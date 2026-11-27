@@ -3,13 +3,7 @@
 package com.panclone.app.ui.screen.files
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.rememberModalBottomSheetState
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -27,21 +22,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import kotlinx.coroutines.launch
 import androidx.compose.material.icons.filled.CreateNewFolder
-import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.DoneAll
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.DriveFileMove
-import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -52,14 +38,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import coil3.compose.AsyncImage
 import com.panclone.app.App
 import com.panclone.app.data.model.PanFile
@@ -70,7 +54,7 @@ import com.panclone.app.util.formatTime
 
 /**
  * 统一底部弹层容器（Material3 ModalBottomSheet，开源库 androidx.compose.material3）。
- * 全部弹窗（文件操作/详情/目录选择/分享）共用，保证风格一致 + 底部滑入动画。
+ * 全部弹窗（文件详情/目录选择）共用，保证风格一致 + 底部滑入动画。
  */
 @Composable
 fun PanSheet(
@@ -87,152 +71,6 @@ fun PanSheet(
         dragHandle = null,
         content = content,
     )
-}
-
-/**
- * 现代化文件操作弹层（文件/文件夹通用）：信息区 + 4 列操作网格 + 取消。
- */
-@Composable
-fun FileActionSheet(
-    file: PanFile,
-    thumbUrl: String?,
-    onOpenPreview: () -> Unit,
-    onDownload: () -> Unit,
-    onShare: () -> Unit,
-    onDetail: () -> Unit,
-    onRename: () -> Unit,
-    onCopy: () -> Unit,
-    onMove: () -> Unit,
-    onDelete: () -> Unit,
-    onSelect: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val colors = LocalAppColors.current
-    // 操作图标：官方百度网盘 App 资源（bg_dn_ic_option_* / edit_icon_open）
-    data class Act(val label: String, val iconRes: Int, val action: () -> Unit)
-
-    val actions = buildList {
-        add(Act(if (file.isDirectory) "打开" else "预览", com.panclone.app.R.drawable.act_open, onOpenPreview))
-        if (!file.isDirectory) add(Act("下载", com.panclone.app.R.drawable.act_download, onDownload))
-        add(Act("分享", com.panclone.app.R.drawable.act_share, onShare))
-        add(Act("详情", com.panclone.app.R.drawable.act_detail, onDetail))
-        add(Act("重命名", com.panclone.app.R.drawable.act_rename, onRename))
-        add(Act("复制", com.panclone.app.R.drawable.act_copy, onCopy))
-        add(Act("移动", com.panclone.app.R.drawable.act_move, onMove))
-        add(Act("多选", com.panclone.app.R.drawable.act_multi, onSelect))
-        add(Act("删除", com.panclone.app.R.drawable.act_delete, onDelete))
-    }
-
-    PanSheet(onDismiss) {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 6.dp),
-            ) {
-                // 信息区
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if (!file.isDirectory && isImageFile(file) && thumbUrl != null) {
-                        AsyncImage(
-                            model = thumbUrl,
-                            contentDescription = null,
-                            modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp)),
-                        )
-                    } else {
-                        Icon(
-                            painter = painterResource(id = iconResFor(file)),
-                            contentDescription = null,
-                            modifier = Modifier.size(38.dp),
-                            tint = Color.Unspecified,
-                        )
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            file.name,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = colors.textPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            (if (file.isDirectory) "文件夹" else formatSize(file.size)) + " · " + formatTime(file.mtime),
-                            fontSize = 12.sp,
-                            color = colors.textSecondary,
-                        )
-                    }
-                }
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .height(0.5.dp)
-                        .background(colors.separator),
-                )
-                // 操作网格 4 列
-                actions.chunked(4).forEach { rowActions ->
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
-                        rowActions.forEach { a ->
-                            val actInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-                            val actPressed by actInteraction.collectIsPressedAsState()
-                            Column(
-                                Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .background(if (actPressed) colors.accent.copy(alpha = 0.14f) else Color.Transparent)
-                                    .clickable(
-                                        interactionSource = actInteraction,
-                                        indication = null,
-                                    ) { a.action() }
-                                    .padding(vertical = 10.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                            ) {
-                                Box(
-                                    Modifier
-                                        .size(40.dp)
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .background(colors.cardSecondary),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Icon(
-                                        painter = painterResource(id = a.iconRes),
-                                        contentDescription = a.label,
-                                        modifier = Modifier.size(22.dp),
-                                        tint = Color.Unspecified,
-                                    )
-                                }
-                                Spacer(Modifier.height(6.dp))
-                                Text(a.label, fontSize = 11.sp, color = colors.textPrimary)
-                            }
-                        }
-                        repeat(4 - rowActions.size) { Spacer(Modifier.weight(1f)) }
-                    }
-                }
-                Spacer(Modifier.height(4.dp))
-                // 取消
-                val cancelInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-                val cancelPressed by cancelInteraction.collectIsPressedAsState()
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(if (cancelPressed) colors.accent.copy(alpha = 0.14f) else colors.cardSecondary)
-                        .clickable(
-                            interactionSource = cancelInteraction,
-                            indication = null,
-                        ) { onDismiss() }
-                        .padding(vertical = 12.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text("取消", fontSize = 15.sp, fontWeight = FontWeight.Medium, color = colors.textPrimary)
-                }
-        }
-    }
 }
 
 /** 文件详情弹窗 */
@@ -302,7 +140,7 @@ fun FileDetailDialog(
             Box(
                 Modifier
                     .fillMaxWidth()
-                     .clip(RoundedCornerShape(12.dp))
+                    .clip(RoundedCornerShape(12.dp))
                     .clip(RoundedCornerShape(14.dp))
                     .background(colors.cardSecondary)
                     .clickable(onClick = onDismiss)
@@ -315,7 +153,7 @@ fun FileDetailDialog(
     }
 }
 
-/** 目录选择器（移动/复制目标） */
+/** 目录选择器：仅由预览页的移动/复制入口使用；文件浏览页不支持移动/复制，入口已隐藏。 */
 @Composable
 fun DirPickerDialog(
     title: String,
@@ -324,7 +162,7 @@ fun DirPickerDialog(
     onPick: (String) -> Unit,
 ) {
     val colors = LocalAppColors.current
-    val repo = remember { FileRepository(App.instance.api) }
+    val repo = remember { FileRepository(App.instance.feiji) }
     var path by remember { mutableStateOf("/") }
     var dirs by remember { mutableStateOf<List<PanFile>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
@@ -420,7 +258,7 @@ fun DirPickerDialog(
                             fontSize = 15.sp,
                             lineHeight = 20.sp,
                         ),
-                        cursorBrush = androidx.compose.ui.graphics.SolidColor(colors.accent),
+                        cursorBrush = SolidColor(colors.accent),
                         modifier = Modifier
                             .weight(1f)
                             .height(40.dp)

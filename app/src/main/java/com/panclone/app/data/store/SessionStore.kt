@@ -33,8 +33,13 @@ class SessionStore(context: Context) {
         appCtx.getSharedPreferences("settings", Context.MODE_PRIVATE)
     }
 
-    private val _loggedIn = MutableStateFlow(cookie.isNotBlank())
+    private val _loggedIn = MutableStateFlow(false)
     val loggedIn: StateFlow<Boolean> = _loggedIn.asStateFlow()
+
+    /** 小飞机登录态：分享模式有 shareId，个人模式有 token，任一存在即视为已登录 */
+    fun refreshLoggedIn() {
+        _loggedIn.value = feiShareId.isNotBlank() || feiToken.isNotBlank()
+    }
 
     private val _avatarUrlFlow = MutableStateFlow("")
     /** 头像 URL（响应式，供底栏「我的」显示真实头像） */
@@ -46,6 +51,58 @@ class SessionStore(context: Context) {
             secure.edit().putString(KEY_COOKIE, v).apply()
             _loggedIn.value = v.isNotBlank()
         }
+
+    // ==================== 小飞机网盘（feijipan.com）登录态与分享上下文 ====================
+
+    /** 登录模式：分享解析（匿名可）或个人网盘（需 token） */
+    var feiMode: String
+        get() = prefs.getString("fei_mode", "SHARE").orEmpty()
+        set(v) = prefs.edit().putString("fei_mode", v).apply()
+
+    /** 当前分享 id（分享模式导航/取链必需） */
+    var feiShareId: String
+        get() = prefs.getString("fei_share_id", "").orEmpty()
+        set(v) = prefs.edit().putString("fei_share_id", v).apply()
+
+    /** 当前分享提取码 */
+    var feiCode: String
+        get() = prefs.getString("fei_code", "").orEmpty()
+        set(v) = prefs.edit().putString("fei_code", v).apply()
+
+    /** 分享标题（用于界面展示当前在浏览哪个分享） */
+    var feiShareName: String
+        get() = prefs.getString("fei_share_name", "").orEmpty()
+        set(v) = prefs.edit().putString("fei_share_name", v).apply()
+
+    /** 个人网盘登录 token（加密存，等于账号控制权） */
+    var feiToken: String
+        get() = secure.getString(KEY_FEI_TOKEN, "").orEmpty()
+        set(v) {
+            secure.edit().putString(KEY_FEI_TOKEN, v).apply()
+            refreshLoggedIn()
+        }
+
+    /** 个人网盘用户 id（取链拼 downloadId 用） */
+    var feiUserId: String
+        get() = secure.getString(KEY_FEI_USER_ID, "").orEmpty()
+        set(v) = secure.edit().putString(KEY_FEI_USER_ID, v).apply()
+
+    /** 保存当前分享上下文并切换到分享模式 */
+    fun saveShareContext(shareId: String, code: String, name: String) {
+        feiMode = "SHARE"
+        feiShareId = shareId
+        feiCode = code
+        feiShareName = name
+        refreshLoggedIn()
+    }
+
+    /** 保存个人网盘登录态并切换到个人模式 */
+    fun savePersonalLogin(token: String, userId: String) {
+        feiMode = "PERSONAL"
+        feiToken = token
+        feiUserId = userId
+        refreshLoggedIn()
+    }
 
     var userName: String
         get() = prefs.getString("user_name", "").orEmpty()
@@ -60,6 +117,7 @@ class SessionStore(context: Context) {
 
     init {
         _avatarUrlFlow.value = prefs.getString("avatar_url", "").orEmpty()
+        refreshLoggedIn()
     }
 
     /** uk 用户 id，分享、上传等接口需要 */
@@ -104,10 +162,19 @@ class SessionStore(context: Context) {
         userName = ""
         avatarUrl = ""
         uk = 0
+        feiShareId = ""
+        feiCode = ""
+        feiShareName = ""
+        feiToken = ""
+        feiUserId = ""
+        feiMode = "SHARE"
+        refreshLoggedIn()
     }
 
     companion object {
         private const val KEY_COOKIE = "bduss_cookie"
+        private const val KEY_FEI_TOKEN = "fei_token"
+        private const val KEY_FEI_USER_ID = "fei_user_id"
 
         /** 从完整 cookie 串里提取 BDUSS/STOKEN，供请求头使用 */
         fun extractAuth(cookie: String): String {

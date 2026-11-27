@@ -1,0 +1,16 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Original cloud-drive mark, kept inside the adaptive-icon safe zone. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M35,76H73C80.7,76 87,69.7 87,62C87,55.2 82,49.5 75.4,48.4C74,37.6 64.7,30 53.8,30C43.5,30 34.7,36.9 32.2,46.8C26.3,48.1 22,53.4 22,60C22,68.8 28.2,76 35,76Z" />
+
+    <!-- The background-colored cutout reads as download/sync without copying a trademark. -->
+    <path
+        android:fillColor="#FF1478F2"
+        android:pathData="M50,42H58V57.5L64.5,51L70.5,57L54,73.5L37.5,57L43.5,51L50,57.5Z" />
+</vector>

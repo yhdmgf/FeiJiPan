@@ -1,0 +1,18 @@
+*.iml
+.gradle/
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+
+# Android/Gradle 构建产物
+app/build/
+build/
+*.apk.idsig
+
+# Keystore（如需保密可取消注释；本项目为自签名，随仓库提交以便 CI 出可安装包）
+# signing/
+# keystore.properties
